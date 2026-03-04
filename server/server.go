@@ -69,7 +69,6 @@ func runServer(
 		logger.Info("starting server", "listenAddr", server.Addr)
 		err := server.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			logger.Error("server error", "err", err)
 			serveErrCh <- err
 			return
 		}
@@ -91,7 +90,6 @@ func runServer(
 
 	shutdownErr := server.Shutdown(shutdownCtx)
 	if shutdownErr != nil {
-		logger.Error("shutdown error", "err", shutdownErr)
 		_ = server.Close()
 		<-serveErrCh
 		return shutdownErr
