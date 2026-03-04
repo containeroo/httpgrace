@@ -2,9 +2,9 @@ package server
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 )
 
@@ -30,7 +30,7 @@ func WithOptions(opts Options) Option {
 	}
 }
 
-// defaultOptions returns sensible defaults for server timeouts.
+// defaultOptions returns the default timeout configuration used by Run.
 func defaultOptions() Options {
 	return Options{
 		ReadHeaderTimeout: 10 * time.Second,
@@ -54,37 +54,54 @@ func RunServer(ctx context.Context, server *http.Server, logger *slog.Logger) er
 	return runServer(ctx, server, logger, defaultOptions().ShutdownTimeout)
 }
 
-func runServer(ctx context.Context, server *http.Server, logger *slog.Logger, shutdownTimeout time.Duration) error {
+// runServer starts server and blocks until either startup fails or ctx is canceled.
+// After cancellation, it performs graceful shutdown bounded by shutdownTimeout.
+func runServer(
+	ctx context.Context,
+	server *http.Server,
+	logger *slog.Logger,
+	shutdownTimeout time.Duration,
+) error {
+	serveErrCh := make(chan error, 1)
+
 	// Start the server in the background.
 	go func() {
 		logger.Info("starting server", "listenAddr", server.Addr)
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		err := server.ListenAndServe()
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("server error", "err", err)
+			serveErrCh <- err
+			return
 		}
+		serveErrCh <- nil
 	}()
 
-	// Graceful shutdown once the context is canceled.
-	var wg sync.WaitGroup
-	wg.Go(func() {
-		<-ctx.Done() // wait for cancel/timeout
+	// Return startup errors immediately; otherwise continue once cancellation begins.
+	select {
+	case err := <-serveErrCh:
+		return err
+	case <-ctx.Done():
+	}
 
-		logger.Info("shutting down server")
+	logger.Info("shutting down server")
 
-		// Use a bounded timeout to finish in-flight requests.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-		defer cancel()
+	// Use a bounded timeout to finish in-flight requests.
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
 
-		if err := server.Shutdown(shutdownCtx); err != nil {
-			logger.Error("shutdown error", "err", err)
-		}
-	})
+	shutdownErr := server.Shutdown(shutdownCtx)
+	if shutdownErr != nil {
+		logger.Error("shutdown error", "err", shutdownErr)
+		_ = server.Close()
+		<-serveErrCh
+		return shutdownErr
+	}
 
-	// Block until the shutdown goroutine finishes.
-	wg.Wait()
-	return nil
+	serveErr := <-serveErrCh // Wait for ListenAndServe to exit after successful shutdown.
+	return serveErr
 }
 
-// newServer returns a new http.Server with sensible defaults and the provided options
+// newServer builds an http.Server from listenAddr, router, and resolved options.
 func newServer(listenAddr string, router http.Handler, options Options) *http.Server {
 	// Create server with sensible timeouts.
 	return &http.Server{
@@ -96,7 +113,7 @@ func newServer(listenAddr string, router http.Handler, options Options) *http.Se
 	}
 }
 
-// optionsFrom returns sensible defaults for server timeouts.
+// optionsFrom resolves options by applying opts on top of defaultOptions.
 func optionsFrom(opts ...Option) Options {
 	options := defaultOptions()
 	for _, opt := range opts {
