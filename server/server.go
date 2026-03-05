@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"net/http"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
 
 // Options configures the HTTP server timeouts applied by Run.
@@ -62,41 +64,44 @@ func runServer(
 	logger *slog.Logger,
 	shutdownTimeout time.Duration,
 ) error {
-	serveErrCh := make(chan error, 1)
+	var eg errgroup.Group
+	// Closed when ListenAndServe exits, regardless of success or failure.
+	serveDone := make(chan struct{})
 
-	// Start the server in the background.
-	go func() {
+	// Serve loop: returns startup/runtime errors, but treats ErrServerClosed as normal.
+	eg.Go(func() error {
+		defer close(serveDone)
 		logger.Info("starting server", "listenAddr", server.Addr)
 		err := server.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			serveErrCh <- err
-			return
+			return err
 		}
-		serveErrCh <- nil
-	}()
+		return nil
+	})
 
-	// Return startup errors immediately; otherwise continue once cancellation begins.
-	select {
-	case err := <-serveErrCh:
-		return err
-	case <-ctx.Done():
-	}
+	// Shutdown loop: waits for caller cancellation, unless serving already finished.
+	eg.Go(func() error {
+		select {
+		case <-serveDone: // Serve loop ended before cancellation; nothing to shut down.
+			return nil
+		case <-ctx.Done(): // Requested graceful shutdown.
+		}
 
-	logger.Info("shutting down server")
+		logger.Info("shutting down server")
 
-	// Use a bounded timeout to finish in-flight requests.
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer cancel()
+		// Use a bounded timeout to finish in-flight requests.
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
 
-	shutdownErr := server.Shutdown(shutdownCtx)
-	if shutdownErr != nil {
-		_ = server.Close()
-		<-serveErrCh
-		return shutdownErr
-	}
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			// Force close to unblock ListenAndServe if graceful shutdown times out.
+			_ = server.Close()
+			return err
+		}
+		return nil
+	})
 
-	serveErr := <-serveErrCh // Wait for ListenAndServe to exit after successful shutdown.
-	return serveErr
+	return eg.Wait()
 }
 
 // newServer builds an http.Server from listenAddr, router, and resolved options.
