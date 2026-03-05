@@ -66,6 +66,29 @@ func TestRunServerStopsOnCancel(t *testing.T) {
 	}
 }
 
+func TestRunServerStopsOnCancelWithNilLogger(t *testing.T) {
+	handler := http.NewServeMux()
+	srv := &http.Server{
+		Addr:    "127.0.0.1:0",
+		Handler: handler,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunServer(ctx, srv, nil)
+	}()
+
+	cancel()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "RunServer returned error: %v", err)
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "RunServer did not return after context cancel with nil logger")
+	}
+}
+
 func TestRunServerListenErrorDoesNotBlockShutdown(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := http.NewServeMux()

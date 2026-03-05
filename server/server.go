@@ -42,16 +42,32 @@ func defaultOptions() Options {
 	}
 }
 
-// Run builds an http.Server with sensible defaults and runs it until ctx is canceled.
-// Use options to override the default timeout values.
+// Run creates and runs an HTTP server until ctx is canceled or startup fails.
+//
+// Parameters:
+//   - ctx controls the server lifetime; cancellation triggers graceful shutdown.
+//   - listenAddr is passed to http.Server.Addr, for example ":8080".
+//   - router is assigned to http.Server.Handler.
+//   - logger is used for lifecycle logs; if nil, lifecycle logging is disabled.
+//   - opts override default timeouts via WithOptions.
+//
+// Run returns an error when startup fails (for example, address already in use)
+// or when graceful shutdown fails.
 func Run(ctx context.Context, listenAddr string, router http.Handler, logger *slog.Logger, opts ...Option) error {
 	options := optionsFrom(opts...)
 	server := newServer(listenAddr, router, options)
 	return runServer(ctx, server, logger, options.ShutdownTimeout)
 }
 
-// RunServer manages an existing http.Server and shuts it down when ctx is canceled.
-// The server is started with ListenAndServe in a background goroutine.
+// RunServer starts server with ListenAndServe and manages graceful shutdown.
+//
+// Parameters:
+//   - ctx controls the server lifetime; cancellation triggers graceful shutdown.
+//   - server is the fully configured http.Server instance to run.
+//   - logger is used for lifecycle logs; if nil, lifecycle logging is disabled.
+//
+// RunServer uses the default shutdown timeout. It returns an error when startup
+// fails or when graceful shutdown fails.
 func RunServer(ctx context.Context, server *http.Server, logger *slog.Logger) error {
 	return runServer(ctx, server, logger, defaultOptions().ShutdownTimeout)
 }
@@ -71,7 +87,7 @@ func runServer(
 	// Serve loop: returns startup/runtime errors, but treats ErrServerClosed as normal.
 	eg.Go(func() error {
 		defer close(serveDone)
-		logger.Info("starting server", "listenAddr", server.Addr)
+		logInfo(logger, "starting server", "listenAddr", server.Addr)
 		err := server.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
@@ -87,7 +103,7 @@ func runServer(
 		case <-ctx.Done(): // Requested graceful shutdown.
 		}
 
-		logger.Info("shutting down server")
+		logInfo(logger, "shutting down server")
 
 		// Use a bounded timeout to finish in-flight requests.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -102,6 +118,14 @@ func runServer(
 	})
 
 	return eg.Wait()
+}
+
+// logInfo logs a structured info event and no-ops when logger is nil.
+func logInfo(logger *slog.Logger, msg string, args ...any) {
+	if logger == nil {
+		return
+	}
+	logger.Info(msg, args...)
 }
 
 // newServer builds an http.Server from listenAddr, router, and resolved options.
