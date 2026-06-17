@@ -119,6 +119,19 @@ func TestRunServerLogsCancelCause(t *testing.T) {
 	assert.Contains(t, logs.String(), `cause="received signal: terminated"`)
 }
 
+func TestSignalContextStopCancels(t *testing.T) {
+	ctx, stop := SignalContext(context.Background())
+
+	stop()
+
+	select {
+	case <-ctx.Done():
+		assert.ErrorIs(t, context.Cause(ctx), context.Canceled)
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "SignalContext stop did not cancel context")
+	}
+}
+
 func TestRunServerListenErrorDoesNotBlockShutdown(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := http.NewServeMux()

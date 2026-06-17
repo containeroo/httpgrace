@@ -12,9 +12,11 @@ go get github.com/containeroo/httpgrace
 
 - `Run(ctx, listenAddr, router, logger, opts...)` builds an `http.Server` and runs it.
 - `RunServer(ctx, server, logger)` runs an already configured `*http.Server`.
+- `SignalContext(parent, signals...)` creates a signal-aware context with cancellation causes.
 - Both return startup and shutdown errors to the caller.
 - `logger` is optional; when `nil`, lifecycle logging is disabled.
-- Shutdown logs include `context.Cause(ctx)`, so callers can preserve signal names with `context.WithCancelCause`.
+- Shutdown logs include `context.Cause(ctx)`, so signal names are visible when using `SignalContext`.
+- On Unix platforms, `SignalContext` defaults to `os.Interrupt`, `SIGTERM`, and `SIGHUP`.
 
 ## Defaults
 
@@ -32,12 +34,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 
 	"github.com/containeroo/httpgrace/server"
 )
@@ -49,17 +48,8 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	ctx, cancel := context.WithCancelCause(context.Background())
-	defer cancel(nil)
-
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(signals)
-
-	go func() {
-		sig := <-signals
-		cancel(fmt.Errorf("received signal: %s", sig))
-	}()
+	ctx, stop := server.SignalContext(context.Background())
+	defer stop()
 
 	if err := server.Run(ctx, ":8080", mux, logger); err != nil {
 		logger.Error("server stopped with error", "err", err)
@@ -74,12 +64,9 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
 	"time"
 
 	"github.com/containeroo/httpgrace/server"
@@ -100,17 +87,8 @@ func main() {
 		IdleTimeout:       30 * time.Second,
 	}
 
-	ctx, cancel := context.WithCancelCause(context.Background())
-	defer cancel(nil)
-
-	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
-	defer signal.Stop(signals)
-
-	go func() {
-		sig := <-signals
-		cancel(fmt.Errorf("received signal: %s", sig))
-	}()
+	ctx, stop := server.SignalContext(context.Background())
+	defer stop()
 
 	if err := server.RunServer(ctx, srv, logger); err != nil {
 		logger.Error("server stopped with error", "err", err)
