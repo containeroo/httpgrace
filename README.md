@@ -15,8 +15,6 @@ go get github.com/containeroo/httpgrace
 - `SignalContext(parent, signals...)` creates a signal-aware context with cancellation causes.
 - Both return startup and shutdown errors to the caller.
 - `logger` is optional; when `nil`, lifecycle logging is disabled.
-- Shutdown logs include `context.Cause(ctx)`, so signal names are visible when using `SignalContext`.
-- On Unix platforms, `SignalContext` defaults to `os.Interrupt`, `SIGTERM`, and `SIGHUP`.
 
 ## Defaults
 
@@ -24,6 +22,24 @@ go get github.com/containeroo/httpgrace
 - `WriteTimeout`: `15s`
 - `IdleTimeout`: `60s`
 - `ShutdownTimeout`: `10s`
+
+## Signals
+
+`SignalContext` creates a context that is canceled when a configured signal is received.
+The received signal is stored as the cancellation cause, and shutdown logs include
+`context.Cause(ctx)`.
+
+By default, `SignalContext` listens for:
+
+- `os.Interrupt`
+- `SIGTERM` on Unix platforms
+
+To treat additional signals, such as `SIGHUP`, as shutdown signals, pass them explicitly:
+
+```go
+ctx, stop := server.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+defer stop()
+```
 
 ## Examples
 

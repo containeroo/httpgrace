@@ -8,5 +8,5 @@ import (
 )
 
 func defaultShutdownSignals() []os.Signal {
-	return []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP}
+	return []os.Signal{os.Interrupt, syscall.SIGTERM}
 }

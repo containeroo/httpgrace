@@ -13,7 +13,7 @@ import (
 // name, allowing Run and RunServer to include it in shutdown logs.
 //
 // If no signals are provided, SignalContext listens for the platform defaults.
-// On Unix platforms those are os.Interrupt, syscall.SIGTERM, and syscall.SIGHUP.
+// On Unix platforms those are os.Interrupt and syscall.SIGTERM.
 //
 // The returned stop function unregisters signal delivery and cancels the
 // context. Callers should defer stop after creating the context.
