@@ -14,6 +14,7 @@ go get github.com/containeroo/httpgrace
 - `RunServer(ctx, server, logger)` runs an already configured `*http.Server`.
 - Both return startup and shutdown errors to the caller.
 - `logger` is optional; when `nil`, lifecycle logging is disabled.
+- Shutdown logs include `context.Cause(ctx)`, so callers can preserve signal names with `context.WithCancelCause`.
 
 ## Defaults
 
@@ -30,14 +31,15 @@ go get github.com/containeroo/httpgrace
 package main
 
 import (
-    "context"
-    "log/slog"
-    "net/http"
-    "os"
-    "os/signal"
-    "syscall"
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 
-    "github.com/containeroo/httpgrace/server"
+	"github.com/containeroo/httpgrace/server"
 )
 
 func main() {
@@ -47,8 +49,17 @@ func main() {
 		_, _ = w.Write([]byte("ok"))
 	})
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
+
+	go func() {
+		sig := <-signals
+		cancel(fmt.Errorf("received signal: %s", sig))
+	}()
 
 	if err := server.Run(ctx, ":8080", mux, logger); err != nil {
 		logger.Error("server stopped with error", "err", err)
@@ -62,15 +73,16 @@ func main() {
 package main
 
 import (
-  "context"
-  "log/slog"
-  "net/http"
-  "os"
-  "os/signal"
-  "syscall"
-  "time"
+	"context"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
-  "github.com/containeroo/httpgrace/server"
+	"github.com/containeroo/httpgrace/server"
 )
 
 func main() {
@@ -88,8 +100,17 @@ func main() {
 		IdleTimeout:       30 * time.Second,
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
+
+	go func() {
+		sig := <-signals
+		cancel(fmt.Errorf("received signal: %s", sig))
+	}()
 
 	if err := server.RunServer(ctx, srv, logger); err != nil {
 		logger.Error("server stopped with error", "err", err)

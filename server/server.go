@@ -103,7 +103,7 @@ func runServer(
 		case <-ctx.Done(): // Requested graceful shutdown.
 		}
 
-		logInfo(logger, "shutting down server")
+		logInfo(logger, "shutting down server", "cause", context.Cause(ctx))
 
 		// Use a bounded timeout to finish in-flight requests.
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)

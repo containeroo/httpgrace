@@ -1,7 +1,9 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -87,6 +89,34 @@ func TestRunServerStopsOnCancelWithNilLogger(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		require.Fail(t, "RunServer did not return after context cancel with nil logger")
 	}
+}
+
+func TestRunServerLogsCancelCause(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	handler := http.NewServeMux()
+	srv := &http.Server{
+		Addr:    "127.0.0.1:0",
+		Handler: handler,
+	}
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- RunServer(ctx, srv, logger)
+	}()
+
+	cancel(errors.New("received signal: terminated"))
+
+	select {
+	case err := <-done:
+		require.NoError(t, err, "RunServer returned error: %v", err)
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "RunServer did not return after context cancel")
+	}
+
+	assert.Contains(t, logs.String(), "shutting down server")
+	assert.Contains(t, logs.String(), `cause="received signal: terminated"`)
 }
 
 func TestRunServerListenErrorDoesNotBlockShutdown(t *testing.T) {
