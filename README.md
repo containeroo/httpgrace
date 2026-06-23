@@ -10,10 +10,10 @@ go get github.com/containeroo/httpgrace
 
 ## API
 
-- `Run(ctx, listenAddr, router, logger, opts...)` builds an `http.Server` and runs it.
+- `Run(ctx, listenAddr, handler, logger, opts...)` builds an `http.Server` and runs it.
 - `RunServer(ctx, server, logger)` runs an already configured `*http.Server`.
 - `SignalContext(parent, signals...)` creates a signal-aware context with cancellation causes.
-- Both return startup and shutdown errors to the caller.
+- `Run` and `RunServer` return startup and shutdown errors to the caller.
 - `logger` is optional; when `nil`, lifecycle logging is disabled.
 
 ## Defaults

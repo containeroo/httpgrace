@@ -47,15 +47,15 @@ func defaultOptions() Options {
 // Parameters:
 //   - ctx controls the server lifetime; cancellation triggers graceful shutdown.
 //   - listenAddr is passed to http.Server.Addr, for example ":8080".
-//   - router is assigned to http.Server.Handler.
+//   - handler is assigned to http.Server.Handler.
 //   - logger is used for lifecycle logs; if nil, lifecycle logging is disabled.
 //   - opts override default timeouts via WithOptions.
 //
 // Run returns an error when startup fails (for example, address already in use)
 // or when graceful shutdown fails.
-func Run(ctx context.Context, listenAddr string, router http.Handler, logger *slog.Logger, opts ...Option) error {
+func Run(ctx context.Context, listenAddr string, handler http.Handler, logger *slog.Logger, opts ...Option) error {
 	options := optionsFrom(opts...)
-	server := newServer(listenAddr, router, options)
+	server := newServer(listenAddr, handler, options)
 	return runServer(ctx, server, logger, options.ShutdownTimeout)
 }
 
@@ -128,12 +128,12 @@ func logInfo(logger *slog.Logger, msg string, args ...any) {
 	logger.Info(msg, args...)
 }
 
-// newServer builds an http.Server from listenAddr, router, and resolved options.
-func newServer(listenAddr string, router http.Handler, options Options) *http.Server {
+// newServer builds an http.Server from listenAddr, handler, and resolved options.
+func newServer(listenAddr string, handler http.Handler, options Options) *http.Server {
 	// Create server with sensible timeouts.
 	return &http.Server{
 		Addr:              listenAddr,
-		Handler:           router,
+		Handler:           handler,
 		ReadHeaderTimeout: options.ReadHeaderTimeout,
 		WriteTimeout:      options.WriteTimeout,
 		IdleTimeout:       options.IdleTimeout,
