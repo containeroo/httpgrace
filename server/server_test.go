@@ -8,12 +8,43 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"runtime/pprof"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// requireNoGoroutineLeaks fails the test when the Go runtime detects
+// goroutines that can no longer possibly become unblocked.
+func requireNoGoroutineLeaks(t *testing.T) {
+	t.Helper()
+
+	profile := pprof.Lookup("goroutineleak")
+	require.NotNil(t, profile)
+
+	var output strings.Builder
+	require.NoError(t, profile.WriteTo(&output, 1))
+
+	assert.Zero(
+		t,
+		profile.Count(),
+		"leaked goroutines:\n%s",
+		output.String(),
+	)
+}
+
+// checkGoroutineLeaks registers a leak check that runs after the test and all
+// other cleanup functions registered later by the test have completed.
+func checkGoroutineLeaks(t *testing.T) {
+	t.Helper()
+
+	t.Cleanup(func() {
+		requireNoGoroutineLeaks(t)
+	})
+}
 
 func TestNewServerDefaults(t *testing.T) {
 	options := optionsFrom()
@@ -82,6 +113,8 @@ func TestOptionsIgnoreNil(t *testing.T) {
 }
 
 func TestRunServerStopsOnCancel(t *testing.T) {
+	checkGoroutineLeaks(t)
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := http.NewServeMux()
 	srv := &http.Server{
@@ -106,6 +139,8 @@ func TestRunServerStopsOnCancel(t *testing.T) {
 }
 
 func TestRunServerStopsOnCancelWithNilLogger(t *testing.T) {
+	checkGoroutineLeaks(t)
+
 	handler := http.NewServeMux()
 	srv := &http.Server{
 		Addr:    "127.0.0.1:0",
@@ -137,6 +172,8 @@ func TestRunServerStopsOnCancelWithNilLogger(t *testing.T) {
 }
 
 func TestRunServerLogsCancelCause(t *testing.T) {
+	checkGoroutineLeaks(t)
+
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, nil))
 	handler := http.NewServeMux()
@@ -165,8 +202,9 @@ func TestRunServerLogsCancelCause(t *testing.T) {
 }
 
 func TestSignalContextStopCancels(t *testing.T) {
-	ctx, stop := SignalContext(context.Background())
+	checkGoroutineLeaks(t)
 
+	ctx, stop := SignalContext(context.Background())
 	stop()
 
 	select {
@@ -178,12 +216,16 @@ func TestSignalContextStopCancels(t *testing.T) {
 }
 
 func TestRunServerListenErrorDoesNotBlockShutdown(t *testing.T) {
+	checkGoroutineLeaks(t)
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := http.NewServeMux()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = ln.Close() })
+	t.Cleanup(func() {
+		_ = ln.Close()
+	})
 
 	srv := &http.Server{
 		Addr:    ln.Addr().String(),
@@ -210,12 +252,16 @@ func TestRunServerListenErrorDoesNotBlockShutdown(t *testing.T) {
 }
 
 func TestRunReturnsListenError(t *testing.T) {
+	checkGoroutineLeaks(t)
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	handler := http.NewServeMux()
 
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = ln.Close() })
+	t.Cleanup(func() {
+		_ = ln.Close()
+	})
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -225,6 +271,8 @@ func TestRunReturnsListenError(t *testing.T) {
 }
 
 func TestRunServerReturnsShutdownTimeoutError(t *testing.T) {
+	checkGoroutineLeaks(t)
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	started := make(chan struct{}, 1)
 	release := make(chan struct{})
