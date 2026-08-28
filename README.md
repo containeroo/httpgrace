@@ -2,6 +2,8 @@
 
 Small Go module for running HTTP servers with graceful shutdown and sensible defaults.
 
+Requires Go 1.27 or newer.
+
 ## Install
 
 ```bash
@@ -16,12 +18,25 @@ go get github.com/containeroo/httpgrace
 - `Run` and `RunServer` return startup and shutdown errors to the caller.
 - `logger` is optional; when `nil`, lifecycle logging is disabled.
 
+`Run` accepts focused functional options for overriding individual defaults:
+
+- `WithReadHeaderTimeout`
+- `WithWriteTimeout`
+- `WithIdleTimeout`
+- `WithMaxHeaderValueCount`
+- `WithShutdownTimeout`
+
+`WithOptions` remains available when the complete option set should be replaced.
+
 ## Defaults
 
 - `ReadHeaderTimeout`: `10s`
 - `WriteTimeout`: `15s`
 - `IdleTimeout`: `60s`
+- `MaxHeaderValueCount`: `http.DefaultMaxHeaderValueCount`
 - `ShutdownTimeout`: `10s`
+
+Go 1.27 defines `http.DefaultMaxHeaderValueCount` as `500`.
 
 ## Signals
 
@@ -37,13 +52,18 @@ By default, `SignalContext` listens for:
 To treat additional signals, such as `SIGHUP`, as shutdown signals, pass them explicitly:
 
 ```go
-ctx, stop := server.SignalContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+ctx, stop := server.SignalContext(
+	context.Background(),
+	os.Interrupt,
+	syscall.SIGTERM,
+	syscall.SIGHUP,
+)
 defer stop()
 ```
 
 ## Examples
 
-### Run with default timeouts
+### Run with default settings
 
 ```go
 package main
@@ -59,6 +79,7 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
@@ -73,7 +94,50 @@ func main() {
 }
 ```
 
+### Override individual settings
+
+Use the focused functional options when only individual defaults should change:
+
+```go
+if err := server.Run(
+	ctx,
+	":8080",
+	mux,
+	logger,
+	server.WithMaxHeaderValueCount(100),
+	server.WithShutdownTimeout(15*time.Second),
+); err != nil {
+	logger.Error("server stopped with error", "err", err)
+}
+```
+
+Settings that are not explicitly overridden retain their `httpgrace` defaults.
+
+### Replace all options
+
+Use `WithOptions` when the complete configuration should be supplied by the caller:
+
+```go
+if err := server.Run(
+	ctx,
+	":8080",
+	mux,
+	logger,
+	server.WithOptions(server.Options{
+		ReadHeaderTimeout:   5 * time.Second,
+		WriteTimeout:        10 * time.Second,
+		IdleTimeout:         30 * time.Second,
+		MaxHeaderValueCount: 100,
+		ShutdownTimeout:     15 * time.Second,
+	}),
+); err != nil {
+	logger.Error("server stopped with error", "err", err)
+}
+```
+
 ### RunServer with a custom http.Server
+
+Use `RunServer` when the caller wants full control over `http.Server`:
 
 ```go
 package main
@@ -90,17 +154,19 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok"))
 	})
 
 	srv := &http.Server{
-		Addr:              ":8080",
-		Handler:           mux,
-		ReadHeaderTimeout: 5 * time.Second,
-		WriteTimeout:      10 * time.Second,
-		IdleTimeout:       30 * time.Second,
+		Addr:                ":8080",
+		Handler:             mux,
+		ReadHeaderTimeout:   5 * time.Second,
+		WriteTimeout:        10 * time.Second,
+		IdleTimeout:         30 * time.Second,
+		MaxHeaderValueCount: 100,
 	}
 
 	ctx, stop := server.SignalContext(context.Background())
@@ -116,7 +182,7 @@ func main() {
 
 This module was inspired by the Grafana blog post:
 
-```
+```text
 https://grafana.com/blog/2024/02/09/how-i-write-http-services-in-go-after-13-years/
 ```
 

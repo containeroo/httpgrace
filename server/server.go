@@ -10,7 +10,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// Options configures the HTTP server timeouts applied by Run.
+// Options configures the HTTP server settings applied by Run.
 type Options struct {
 	// ReadHeaderTimeout limits how long to read request headers.
 	ReadHeaderTimeout time.Duration
@@ -18,6 +18,8 @@ type Options struct {
 	WriteTimeout time.Duration
 	// IdleTimeout sets how long to keep idle connections open.
 	IdleTimeout time.Duration
+	// MaxHeaderValueCount limits the number of request header values accepted.
+	MaxHeaderValueCount int
 	// ShutdownTimeout bounds how long to wait for graceful shutdown.
 	ShutdownTimeout time.Duration
 }
@@ -25,20 +27,58 @@ type Options struct {
 // Option mutates Options used by Run.
 type Option func(*Options)
 
-// WithOptions overwrites the server timeout options used by Run.
+// WithOptions replaces all server options used by Run.
+//
+// Prefer the focused With... options when overriding only individual settings.
 func WithOptions(opts Options) Option {
 	return func(target *Options) {
 		*target = opts
 	}
 }
 
-// defaultOptions returns the default timeout configuration used by Run.
+// WithReadHeaderTimeout overrides the default request-header read timeout.
+func WithReadHeaderTimeout(timeout time.Duration) Option {
+	return func(options *Options) {
+		options.ReadHeaderTimeout = timeout
+	}
+}
+
+// WithWriteTimeout overrides the default response write timeout.
+func WithWriteTimeout(timeout time.Duration) Option {
+	return func(options *Options) {
+		options.WriteTimeout = timeout
+	}
+}
+
+// WithIdleTimeout overrides the default idle connection timeout.
+func WithIdleTimeout(timeout time.Duration) Option {
+	return func(options *Options) {
+		options.IdleTimeout = timeout
+	}
+}
+
+// WithMaxHeaderValueCount overrides the maximum number of request header values.
+func WithMaxHeaderValueCount(count int) Option {
+	return func(options *Options) {
+		options.MaxHeaderValueCount = count
+	}
+}
+
+// WithShutdownTimeout overrides the default graceful shutdown timeout.
+func WithShutdownTimeout(timeout time.Duration) Option {
+	return func(options *Options) {
+		options.ShutdownTimeout = timeout
+	}
+}
+
+// defaultOptions returns the default configuration used by Run.
 func defaultOptions() Options {
 	return Options{
-		ReadHeaderTimeout: 10 * time.Second,
-		WriteTimeout:      15 * time.Second,
-		IdleTimeout:       60 * time.Second,
-		ShutdownTimeout:   10 * time.Second,
+		ReadHeaderTimeout:   10 * time.Second,
+		WriteTimeout:        15 * time.Second,
+		IdleTimeout:         60 * time.Second,
+		MaxHeaderValueCount: http.DefaultMaxHeaderValueCount,
+		ShutdownTimeout:     10 * time.Second,
 	}
 }
 
@@ -49,11 +89,17 @@ func defaultOptions() Options {
 //   - listenAddr is passed to http.Server.Addr, for example ":8080".
 //   - handler is assigned to http.Server.Handler.
 //   - logger is used for lifecycle logs; if nil, lifecycle logging is disabled.
-//   - opts override default timeouts via WithOptions.
+//   - opts override individual defaults or replace them through WithOptions.
 //
 // Run returns an error when startup fails (for example, address already in use)
 // or when graceful shutdown fails.
-func Run(ctx context.Context, listenAddr string, handler http.Handler, logger *slog.Logger, opts ...Option) error {
+func Run(
+	ctx context.Context,
+	listenAddr string,
+	handler http.Handler,
+	logger *slog.Logger,
+	opts ...Option,
+) error {
 	options := optionsFrom(opts...)
 	server := newServer(listenAddr, handler, options)
 	return runServer(ctx, server, logger, options.ShutdownTimeout)
@@ -81,13 +127,16 @@ func runServer(
 	shutdownTimeout time.Duration,
 ) error {
 	var eg errgroup.Group
+
 	// Closed when ListenAndServe exits, regardless of success or failure.
 	serveDone := make(chan struct{})
 
 	// Serve loop: returns startup/runtime errors, but treats ErrServerClosed as normal.
 	eg.Go(func() error {
 		defer close(serveDone)
+
 		logInfo(logger, "starting server", "listenAddr", server.Addr)
+
 		err := server.ListenAndServe()
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			return err
@@ -98,15 +147,20 @@ func runServer(
 	// Shutdown loop: waits for caller cancellation, unless serving already finished.
 	eg.Go(func() error {
 		select {
-		case <-serveDone: // Serve loop ended before cancellation; nothing to shut down.
+		case <-serveDone:
+			// Serve loop ended before cancellation; nothing to shut down.
 			return nil
-		case <-ctx.Done(): // Requested graceful shutdown.
+		case <-ctx.Done():
+			// Requested graceful shutdown.
 		}
 
 		logInfo(logger, "shutting down server", "cause", context.Cause(ctx))
 
 		// Use a bounded timeout to finish in-flight requests.
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(
+			context.Background(),
+			shutdownTimeout,
+		)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
@@ -129,14 +183,18 @@ func logInfo(logger *slog.Logger, msg string, args ...any) {
 }
 
 // newServer builds an http.Server from listenAddr, handler, and resolved options.
-func newServer(listenAddr string, handler http.Handler, options Options) *http.Server {
-	// Create server with sensible timeouts.
+func newServer(
+	listenAddr string,
+	handler http.Handler,
+	options Options,
+) *http.Server {
 	return &http.Server{
-		Addr:              listenAddr,
-		Handler:           handler,
-		ReadHeaderTimeout: options.ReadHeaderTimeout,
-		WriteTimeout:      options.WriteTimeout,
-		IdleTimeout:       options.IdleTimeout,
+		Addr:                listenAddr,
+		Handler:             handler,
+		ReadHeaderTimeout:   options.ReadHeaderTimeout,
+		WriteTimeout:        options.WriteTimeout,
+		IdleTimeout:         options.IdleTimeout,
+		MaxHeaderValueCount: options.MaxHeaderValueCount,
 	}
 }
 
