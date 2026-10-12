@@ -1,5 +1,9 @@
 # httpgrace
 
+> [!WARNING]
+> **Deprecated:** use [`github.com/containeroo/httpkit/grace`](https://github.com/containeroo/httpkit/tree/main/grace) for new projects.
+> `httpgrace` remains available for existing consumers, but receives no new features.
+
 Small Go module for running HTTP servers with graceful shutdown and sensible defaults.
 
 Requires Go 1.27 or newer.
@@ -7,8 +11,24 @@ Requires Go 1.27 or newer.
 ## Install
 
 ```bash
-go get github.com/containeroo/httpgrace
+go get github.com/containeroo/httpkit/grace
 ```
+
+## Migration
+
+Replace:
+
+```go
+import "github.com/containeroo/httpgrace/server"
+```
+
+with:
+
+```go
+import "github.com/containeroo/httpkit/grace"
+```
+
+The `grace` API is equivalent; rename the imported package from `server` to `grace`.
 
 ## API
 
